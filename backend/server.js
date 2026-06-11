@@ -63,23 +63,6 @@ function generateReceiptNumber() {
     return 'RCP-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random() * 10000)).padStart(4, '0');
 }
 
-// ========== MIDDLEWARE ==========
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (!token) {
-        req.user = null;
-        return next();
-    }
-    
-    jwt.verify(token, SECRET_KEY, (err, user) => {
-        if (err) req.user = null;
-        else req.user = user;
-        next();
-    });
-}
-
 // ========== AUTH API ==========
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
@@ -89,7 +72,7 @@ app.post('/api/login', (req, res) => {
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role, slotId: user.slotId },
             SECRET_KEY,
-            { expiresIn: '24h' }
+            { expiresIn: '7d' }
         );
         res.json({ 
             success: true, 
@@ -105,8 +88,20 @@ app.post('/api/logout', (req, res) => {
     res.json({ success: true });
 });
 
-app.get('/api/current-user', authenticateToken, (req, res) => {
-    res.json(req.user || null);
+app.get('/api/current-user', (req, res) => {
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+        return res.json(null);
+    }
+    
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        res.json(decoded);
+    } catch (error) {
+        res.json(null);
+    }
 });
 
 app.post('/api/register', (req, res) => {
@@ -146,15 +141,31 @@ app.post('/api/register', (req, res) => {
     res.json({ success: true, message: 'Registration successful!', username, slotNumber: slot.slotNumber, permitNo });
 });
 
+// ========== MIDDLEWARE ==========
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        req.user = decoded;
+        next();
+    } catch (error) {
+        return res.status(403).json({ error: 'Invalid token' });
+    }
+}
+
 // ========== SLOTS API ==========
 app.get('/api/slots', authenticateToken, (req, res) => {
     let filteredSlots = slots;
     
-    // IMPORTANT: Tenant can only see their own slot
-    if (req.user && req.user.role === 'tenant' && req.user.slotId) {
+    if (req.user.role === 'tenant' && req.user.slotId) {
         filteredSlots = slots.filter(s => s.slotNumber === req.user.slotId);
     }
-    // Admin sees all slots (no filtering)
     
     const updatedSlots = filteredSlots.map(slot => {
         if (slot.renter.isOccupied && slot.renter.endDate) {
@@ -170,7 +181,7 @@ app.get('/api/available-slots', (req, res) => {
 });
 
 app.post('/api/slots/:slotId/rent', authenticateToken, (req, res) => {
-    if (req.user?.role !== 'admin') {
+    if (req.user.role !== 'admin') {
         return res.status(403).json({ error: 'Unauthorized - Admin only' });
     }
     
@@ -191,7 +202,7 @@ app.post('/api/slots/:slotId/rent', authenticateToken, (req, res) => {
 });
 
 app.put('/api/slots/:slotId/edit', authenticateToken, (req, res) => {
-    if (req.user?.role !== 'admin') {
+    if (req.user.role !== 'admin') {
         return res.status(403).json({ error: 'Unauthorized - Admin only' });
     }
     
@@ -213,7 +224,7 @@ app.put('/api/slots/:slotId/edit', authenticateToken, (req, res) => {
 });
 
 app.delete('/api/slots/:slotId/vacate', authenticateToken, (req, res) => {
-    if (req.user?.role !== 'admin') {
+    if (req.user.role !== 'admin') {
         return res.status(403).json({ error: 'Unauthorized - Admin only' });
     }
     
@@ -285,7 +296,7 @@ app.post('/api/send-reminder', (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log('========================================');
     console.log('  TRINIDAD PUBLIC MARKET SYSTEM');
     console.log('  Backend running on port ' + PORT);
