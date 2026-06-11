@@ -15,10 +15,9 @@ function App() {
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [searchTerm, setSearchTerm] = useState('');
   const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
   const [showLogin, setShowLogin] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState('');
   const [availableSlots, setAvailableSlots] = useState([]);
   const [selectedRegisterSlot, setSelectedRegisterSlot] = useState('');
   const [loginData, setLoginData] = useState({ username: '', password: '' });
@@ -32,9 +31,20 @@ function App() {
   const [activeTab, setActiveTab] = useState('slots');
   const [formData, setFormData] = useState({ name: '', address: '', contact: '', startDate: '', endDate: '' });
 
-  useEffect(() => { 
-    checkCurrentUser();
-    fetchAvailableSlots();
+  useEffect(() => {
+    const savedToken = localStorage.getItem('token');
+    const savedUser = localStorage.getItem('user');
+    
+    if (savedToken && savedUser) {
+      setToken(savedToken);
+      setUser(JSON.parse(savedUser));
+      setShowLogin(false);
+      fetchData(savedToken);
+      fetchAvailableSlots();
+    } else {
+      setShowLogin(true);
+      fetchAvailableSlots();
+    }
   }, []);
 
   const fetchAvailableSlots = async () => {
@@ -46,28 +56,15 @@ function App() {
     }
   };
 
-  const checkCurrentUser = async () => {
-    try {
-      const res = await axios.get(API_URL + '/current-user');
-      if (res.data) {
-        setUser(res.data);
-        setShowLogin(false);
-        fetchData();
-      } else {
-        setShowLogin(true);
-      }
-    } catch (error) {
-      setShowLogin(true);
-    }
+  const fetchData = async (authToken) => {
+    await Promise.all([fetchSlots(authToken), fetchPayments(authToken), fetchDashboard(authToken)]);
   };
 
-  const fetchData = async () => {
-    await Promise.all([fetchSlots(), fetchPayments(), fetchDashboard()]);
-  };
-
-  const fetchSlots = async () => {
+  const fetchSlots = async (authToken) => {
     try {
-      const res = await axios.get(API_URL + '/slots');
+      const res = await axios.get(API_URL + '/slots', {
+        headers: { Authorization: Bearer  }
+      });
       setSlots(res.data);
       checkDueDates(res.data);
     } catch (error) {
@@ -75,7 +72,7 @@ function App() {
     }
   };
 
-  const fetchPayments = async () => {
+  const fetchPayments = async (authToken) => {
     try {
       const res = await axios.get(API_URL + '/payments');
       setPayments(res.data);
@@ -84,7 +81,7 @@ function App() {
     }
   };
 
-  const fetchDashboard = async () => {
+  const fetchDashboard = async (authToken) => {
     try {
       const res = await axios.get(API_URL + '/dashboard');
       setDashboard(res.data);
@@ -110,9 +107,12 @@ function App() {
     try {
       const res = await axios.post(API_URL + '/login', loginData);
       if (res.data.success) {
+        localStorage.setItem('token', res.data.token);
+        localStorage.setItem('user', JSON.stringify(res.data.user));
+        setToken(res.data.token);
         setUser(res.data.user);
         setShowLogin(false);
-        fetchData();
+        fetchData(res.data.token);
       } else {
         alert('Invalid credentials');
       }
@@ -121,19 +121,12 @@ function App() {
     }
   };
 
-  const handleForgotPassword = async () => {
-    if (!forgotEmail) {
-      alert('Please enter your email');
-      return;
-    }
-    try {
-      await axios.post(API_URL + '/forgot-password', { email: forgotEmail });
-      alert('Password reset link sent to your email!');
-      setShowForgotPassword(false);
-      setForgotEmail('');
-    } catch (error) {
-      alert('Email not found');
-    }
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setToken(null);
+    setUser(null);
+    setShowLogin(true);
   };
 
   const handleRegister = async () => {
@@ -171,12 +164,6 @@ function App() {
     }
   };
 
-  const handleLogout = async () => {
-    await axios.post(API_URL + '/logout');
-    setUser(null);
-    setShowLogin(true);
-  };
-
   const handleEdit = (slot) => {
     setEditingSlot(slot);
     setFormData({
@@ -191,11 +178,15 @@ function App() {
   const handleSave = async () => {
     try {
       if (editingSlot.renter.isOccupied) {
-        await axios.put(API_URL + '/slots/' + editingSlot.id + '/edit', formData);
+        await axios.put(API_URL + '/slots/' + editingSlot.id + '/edit', formData, {
+          headers: { Authorization: Bearer  }
+        });
       } else {
-        await axios.post(API_URL + '/slots/' + editingSlot.id + '/rent', formData);
+        await axios.post(API_URL + '/slots/' + editingSlot.id + '/rent', formData, {
+          headers: { Authorization: Bearer  }
+        });
       }
-      fetchSlots();
+      fetchSlots(token);
       setEditingSlot(null);
       setFormData({ name: '', address: '', contact: '', startDate: '', endDate: '' });
       alert('Saved successfully!');
@@ -206,8 +197,10 @@ function App() {
 
   const handleVacate = async (slotId) => {
     if (window.confirm('Vacate this slot?')) {
-      await axios.delete(API_URL + '/slots/' + slotId + '/vacate');
-      fetchSlots();
+      await axios.delete(API_URL + '/slots/' + slotId + '/vacate', {
+        headers: { Authorization: Bearer  }
+      });
+      fetchSlots(token);
       alert('Slot vacated');
     }
   };
@@ -218,15 +211,15 @@ function App() {
       return;
     }
     try {
-      const res = await axios.post(API_URL + '/payments', {
+      await axios.post(API_URL + '/payments', {
         slotId: selectedSlotForPayment.id,
         amount: parseFloat(paymentAmount),
         paymentMethod: paymentMethod
       });
-      alert('Payment recorded! Receipt sent.');
+      alert('Payment recorded!');
       setShowPaymentModal(false);
       setPaymentAmount('');
-      fetchData();
+      fetchData(token);
     } catch (error) {
       alert('Payment failed');
     }
@@ -239,7 +232,7 @@ function App() {
 
   const generateTextReport = () => {
     let report = 'TRINIDAD PUBLIC MARKET - STALL REPORT\n';
-    report += '=' .repeat(50) + '\n';
+    report += '='.repeat(50) + '\n';
     report += 'Date Generated: ' + new Date().toLocaleString() + '\n\n';
     report += 'SUMMARY\n';
     report += 'Total Slots: 10\n';
@@ -290,7 +283,7 @@ function App() {
   };
 
   // LOGIN PAGE
-  if (showLogin && !showRegister && !showForgotPassword) {
+  if (showLogin && !showRegister) {
     return (
       <div className="login-page">
         <div className="login-card">
@@ -300,22 +293,6 @@ function App() {
           <input type="password" placeholder="Password" value={loginData.password} onChange={e => setLoginData({...loginData, password: e.target.value})} onKeyPress={e => e.key === 'Enter' && handleLogin()} />
           <button onClick={handleLogin}>Login</button>
           <button className="register-link-btn" onClick={() => setShowRegister(true)}>Create New Account</button>
-          <button className="forgot-link-btn" onClick={() => setShowForgotPassword(true)}>Forgot Password?</button>
-        </div>
-      </div>
-    );
-  }
-
-  // FORGOT PASSWORD PAGE
-  if (showForgotPassword) {
-    return (
-      <div className="login-page">
-        <div className="login-card">
-          <h1>🏪 Forgot Password</h1>
-          <h2>Enter your email to reset password</h2>
-          <input type="email" placeholder="Email Address" value={forgotEmail} onChange={e => setForgotEmail(e.target.value)} />
-          <button onClick={handleForgotPassword}>Send Reset Link</button>
-          <button className="register-link-btn" onClick={() => { setShowForgotPassword(false); setShowLogin(true); }}>Back to Login</button>
         </div>
       </div>
     );
@@ -472,7 +449,7 @@ function App() {
                     <td className="amount-paid">₱{p.amount}</td>
                     <td>{p.paymentMethod}</td>
                     <td><code>{p.orNumber}</code></td>
-                  </tr>
+                  </table>
                 ))
               )}
             </tbody>
@@ -502,7 +479,7 @@ function App() {
       {showPaymentModal && selectedSlotForPayment && (
         <div className="modal-overlay" onClick={() => setShowPaymentModal(false)}>
           <div className="modal-box" onClick={e => e.stopPropagation()}>
-            <div className="modal-header"><h3>Payment - Slot #{selectedSlotForPayment.slotNumber}</h3></div>
+            <div className="modal-header"><h3>💰 Payment - Slot #{selectedSlotForPayment.slotNumber}</h3></div>
             <div className="modal-body">
               <p><strong>Renter:</strong> {selectedSlotForPayment.renter.name}</p>
               <p><strong>Outstanding:</strong> ₱{selectedSlotForPayment.renter.outstandingBalance || 0}</p>
@@ -522,35 +499,16 @@ function App() {
       {showReport && (
         <div className="modal-overlay" onClick={closeReport}>
           <div className="modal-box report-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header"><h3>Market Stall Report</h3></div>
+            <div className="modal-header"><h3>📄 Market Stall Report</h3></div>
             <div className="modal-body">
               <p><strong>Date Generated:</strong> {new Date().toLocaleString()}</p>
               <h4>Summary</h4>
-              <table className="report-table">
-                <thead><tr><th>Total Slots</th><th>Occupied</th><th>Vacant</th><th>Occupancy Rate</th></tr></thead>
-                <tbody><tr><td>10</td><td>{occupiedCount}</td><td>{vacantCount}</td><td>{(occupiedCount/10*100).toFixed(0)}%</td></tr></tbody>
-              </table>
+              <table className="report-table"><thead><tr><th>Total Slots</th><th>Occupied</th><th>Vacant</th><th>Occupancy Rate</th></tr></thead><tbody><tr><td style={{textAlign:'center'}}>10</td><td style={{textAlign:'center'}}>{occupiedCount}</td><td style={{textAlign:'center'}}>{vacantCount}</td><td style={{textAlign:'center'}}>{(occupiedCount/10*100).toFixed(0)}%</td></tr></tbody></table>
               <h4>Slot Details</h4>
-              <table className="report-table">
-                <thead><tr><th>Slot #</th><th>Status</th><th>Renter Name</th><th>Address</th><th>Contact</th><th>Permit No.</th></tr></thead>
-                <tbody>
-                  {slots.map(slot => (
-                    <tr key={slot.id}>
-                      <td>{slot.slotNumber}</td>
-                      <td>{slot.renter.isOccupied ? 'Occupied' : 'Vacant'}</td>
-                      <td>{slot.renter.name || '-'}</td>
-                      <td>{slot.renter.address || '-'}</td>
-                      <td>{slot.renter.contact || '-'}</td>
-                      <td>{slot.renter.businessPermitNo || '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <table className="report-table"><thead><tr><th>Slot #</th><th>Status</th><th>Renter Name</th><th>Address</th><th>Contact</th><th>Permit No.</th></tr></thead>
+              <tbody>{slots.map(slot => (<tr key={slot.id}><td style={{textAlign:'center'}}>{slot.slotNumber}</td><td>{slot.renter.isOccupied ? 'Occupied' : 'Vacant'}</td><td>{slot.renter.name || '-'}</td><td>{slot.renter.address || '-'}</td><td>{slot.renter.contact || '-'}</td><td>{slot.renter.businessPermitNo || '-'}</td></tr>))}</tbody></table>
             </div>
-            <div className="modal-footer">
-              <button className="btn-save" onClick={printReport}>Print Report</button>
-              <button className="btn-cancel" onClick={closeReport}>Close</button>
-            </div>
+            <div className="modal-footer"><button className="btn-save" onClick={printReport}>Print Report</button><button className="btn-cancel" onClick={closeReport}>Close</button></div>
           </div>
         </div>
       )}
@@ -559,10 +517,7 @@ function App() {
         <div className="bell" onClick={() => setShowNotifications(!showNotifications)}>
           🔔 {notifications.length > 0 && <span className="bell-badge">{notifications.length}</span>}
           {showNotifications && notifications.length > 0 && (
-            <div className="notif-panel">
-              <h4>Alerts</h4>
-              {notifications.map(n => <div key={n.id} className="notif-item">{n.message}</div>)}
-            </div>
+            <div className="notif-panel"><h4>⚠️ Alerts</h4>{notifications.map(n => <div key={n.id} className="notif-item">{n.message}</div>)}</div>
           )}
         </div>
       </div>
@@ -571,7 +526,3 @@ function App() {
 }
 
 export default App;
-
-
-
-
