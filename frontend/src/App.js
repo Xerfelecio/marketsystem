@@ -37,11 +37,14 @@ function App() {
     const savedToken = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
     
+    console.log('Saved token:', savedToken);
+    console.log('Saved user:', savedUser);
+    
     if (savedToken && savedUser) {
       setToken(savedToken);
       setUser(JSON.parse(savedUser));
-      fetchData(savedToken);
       setShowLogin(false);
+      fetchData(savedToken);
     } else {
       setShowLogin(true);
     }
@@ -68,7 +71,6 @@ function App() {
       setDashboard(dashRes.data);
     } catch (error) { 
       console.error(error);
-      // If token is invalid, logout
       if (error.response?.status === 401) {
         handleLogout();
       }
@@ -78,6 +80,8 @@ function App() {
   const handleLogin = async () => {
     try {
       const res = await axios.post(API_URL + '/login', loginData);
+      console.log('Login response:', res.data);
+      
       if (res.data.success) {
         localStorage.setItem('token', res.data.token);
         localStorage.setItem('user', JSON.stringify(res.data.user));
@@ -86,7 +90,10 @@ function App() {
         setShowLogin(false);
         fetchData(res.data.token);
       } else { alert('Invalid credentials'); }
-    } catch (error) { alert('Login failed'); }
+    } catch (error) { 
+      console.error('Login error:', error);
+      alert('Login failed'); 
+    }
   };
 
   const handleLogout = () => {
@@ -371,7 +378,7 @@ function App() {
           <div className="payments-header">Payment History</div>
           <table className="payments-table">
             <thead>
-              <tr><th>Date</th><th>Slot #</th><th>Renter Name</th><th>Amount</th><th>Method</th><th>OR Number</th></tr>
+              <tr><th>Date</th><th>Slot #</th><th>Renter Name</th><th>Amount</th><th>Method</th><th>OR Number</th><tr>
             </thead>
             <tbody>
               {payments.length === 0 ? (
