@@ -29,20 +29,49 @@ for (let i = 1; i <= 10; i++) {
         monthlyRent: MONTHLY_RENT,
         assignedTo: null,
         renter: {
-            name: '', address: '', contact: '', businessPermitNo: '', isOccupied: false,
-            startDate: null, endDate: null, daysRemaining: 0, penalty: 0,
-            penaltyApplied: false, outstandingBalance: 0, lastPaymentDate: null
+            name: '',
+            address: '',
+            contact: '',
+            businessPermitNo: '',
+            isOccupied: false,
+            startDate: null,
+            endDate: null,
+            daysRemaining: 0,
+            penalty: 0,
+            penaltyApplied: false,
+            outstandingBalance: 0,
+            lastPaymentDate: null
         }
     });
 }
 
-// Sample occupied slot
+// Sample occupied slot for demo (Slot #1)
 slots[0].renter = {
-    name: 'Juan Dela Cruz', address: 'Poblacion, Trinidad, Bohol', contact: '09123456789',
-    businessPermitNo: 'BP-2026-1001', isOccupied: true, startDate: '2026-06-01',
-    endDate: '2026-06-30', daysRemaining: 19, penalty: 0, penaltyApplied: false,
-    outstandingBalance: 0, lastPaymentDate: null
+    name: 'Juan Dela Cruz',
+    address: 'Poblacion, Trinidad, Bohol',
+    contact: '09123456789',
+    businessPermitNo: 'BP-2026-1001',
+    isOccupied: true,
+    startDate: '2026-06-01',
+    endDate: '2026-06-30',
+    daysRemaining: 19,
+    penalty: 0,
+    penaltyApplied: false,
+    outstandingBalance: 0,
+    lastPaymentDate: null
 };
+
+// Sample payment
+payments.push({
+    id: nextPaymentId++,
+    slotId: 1,
+    slotNumber: 1,
+    renterName: 'Juan Dela Cruz',
+    amount: 1000,
+    paymentMethod: 'Cash',
+    orNumber: 'RCP-2026-0001',
+    date: new Date().toISOString()
+});
 
 // ========== HELPER FUNCTIONS ==========
 function generatePermitNo() {
@@ -163,9 +192,12 @@ function authenticateToken(req, res, next) {
 app.get('/api/slots', authenticateToken, (req, res) => {
     let filteredSlots = slots;
     
+    // IMPORTANT: Tenant can only see their own slot
+    // Admin sees ALL 10 slots
     if (req.user.role === 'tenant' && req.user.slotId) {
         filteredSlots = slots.filter(s => s.slotNumber === req.user.slotId);
     }
+    // Admin sees all slots (no filtering)
     
     const updatedSlots = filteredSlots.map(slot => {
         if (slot.renter.isOccupied && slot.renter.endDate) {
