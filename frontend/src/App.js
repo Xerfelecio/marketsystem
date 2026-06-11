@@ -16,7 +16,8 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
-  const [showLogin, setShowLogin] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [showLogin, setShowLogin] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
   const [selectedRegisterSlot, setSelectedRegisterSlot] = useState('');
@@ -31,16 +32,21 @@ function App() {
   const [activeTab, setActiveTab] = useState('slots');
   const [formData, setFormData] = useState({ name: '', address: '', contact: '', startDate: '', endDate: '' });
 
+  // Check for existing session on page load
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
+    
     if (savedToken && savedUser) {
       setToken(savedToken);
       setUser(JSON.parse(savedUser));
-      setShowLogin(false);
       fetchData(savedToken);
+      setShowLogin(false);
+    } else {
+      setShowLogin(true);
     }
     fetchAvailableSlots();
+    setLoading(false);
   }, []);
 
   const fetchAvailableSlots = async () => {
@@ -52,13 +58,21 @@ function App() {
 
   const fetchData = async (authToken) => {
     try {
-      const res = await axios.get(API_URL + '/slots', { headers: { Authorization: Bearer  } });
-      setSlots(res.data);
-      const payRes = await axios.get(API_URL + '/payments');
+      const [slotsRes, payRes, dashRes] = await Promise.all([
+        axios.get(API_URL + '/slots', { headers: { Authorization: Bearer  } }),
+        axios.get(API_URL + '/payments'),
+        axios.get(API_URL + '/dashboard')
+      ]);
+      setSlots(slotsRes.data);
       setPayments(payRes.data);
-      const dashRes = await axios.get(API_URL + '/dashboard');
       setDashboard(dashRes.data);
-    } catch (error) { console.error(error); }
+    } catch (error) { 
+      console.error(error);
+      // If token is invalid, logout
+      if (error.response?.status === 401) {
+        handleLogout();
+      }
+    }
   };
 
   const handleLogin = async () => {
@@ -106,30 +120,6 @@ function App() {
         fetchAvailableSlots();
       } else { alert(res.data.message); }
     } catch (error) { alert('Registration failed'); }
-  };
-
-  const generateTextReport = () => {
-    let report = 'TRINIDAD PUBLIC MARKET REPORT\n';
-    report += 'Date: ' + new Date().toLocaleString() + '\n\n';
-    slots.forEach(slot => {
-      report += 'Slot #' + slot.slotNumber + ': ';
-      report += slot.renter.isOccupied ? 'OCCUPIED - ' + slot.renter.name : 'VACANT';
-      report += '\n';
-    });
-    const blob = new Blob([report], { type: 'text/plain' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'market-report.txt';
-    link.click();
-  };
-
-  const generateHTMLReport = () => setShowReport(true);
-  const closeReport = () => setShowReport(false);
-  const printReport = () => window.print();
-
-  const sendReminder = async (slotId) => {
-    await axios.post(API_URL + '/send-reminder', { slotId });
-    alert('Reminder sent!');
   };
 
   const handleEdit = (slot) => {
@@ -185,6 +175,46 @@ function App() {
     } catch (error) { alert('Payment failed'); }
   };
 
+  const sendReminder = async (slotId) => {
+    await axios.post(API_URL + '/send-reminder', { slotId });
+    alert('Reminder sent!');
+  };
+
+  const generateTextReport = () => {
+    let report = 'TRINIDAD PUBLIC MARKET - STALL REPORT\n';
+    report += '='.repeat(50) + '\n';
+    report += 'Date Generated: ' + new Date().toLocaleString() + '\n\n';
+    report += 'SUMMARY\n';
+    report += 'Total Slots: 10\n';
+    report += 'Occupied: ' + slots.filter(s => s.renter.isOccupied).length + '\n';
+    report += 'Vacant: ' + slots.filter(s => !s.renter.isOccupied).length + '\n\n';
+    report += 'SLOT DETAILS\n';
+    slots.forEach(slot => {
+      report += 'Slot #' + slot.slotNumber + ': ';
+      report += slot.renter.isOccupied ? 'OCCUPIED - ' + slot.renter.name : 'VACANT';
+      report += '\n';
+    });
+    const blob = new Blob([report], { type: 'text/plain' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'market-report.txt';
+    link.click();
+  };
+
+  const generateHTMLReport = () => setShowReport(true);
+  const closeReport = () => setShowReport(false);
+  const printReport = () => window.print();
+
+  const filteredSlots = slots.filter(slot =>
+    slot.renter.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    slot.slotNumber.toString().includes(searchTerm)
+  );
+
+  if (loading) {
+    return <div className="loading">Loading...</div>;
+  }
+
+  // LOGIN PAGE
   if (showLogin && !showRegister) {
     return (
       <div className="login-page">
@@ -200,6 +230,7 @@ function App() {
     );
   }
 
+  // REGISTER PAGE
   if (showRegister) {
     return (
       <div className="login-page">
@@ -226,50 +257,82 @@ function App() {
     );
   }
 
+  // MAIN APP (already logged in)
+  const occupiedCount = slots.filter(s => s.renter.isOccupied).length;
+  const vacantCount = slots.filter(s => !s.renter.isOccupied).length;
+  const overdueCount = slots.filter(s => s.renter.isOccupied && s.renter.daysRemaining < 0).length;
+
   return (
     <div className="app">
       <div className="header">
         <h1>🏪 Trinidad Public Market</h1>
         <h2>Stall Management System</h2>
-        <p>Trinidad, Bohol - 10 Slots | Monthly Rent: ₱1000</p>
+        <p>Trinidad, Bohol - 10 Slots | Monthly Rent: ₱{dashboard?.monthlyRent || 1000}</p>
         <div className="user-bar">
-          <span>👤 {user?.username} ({user?.role})</span>
-          <button onClick={handleLogout}>Logout</button>
+          <span className="user-info">👤 {user?.username} ({user?.role})</span>
+          <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
       </div>
 
+      <div className="report-bar">
+        <button className="btn-report btn-text" onClick={generateTextReport}>📄 Generate Text Report</button>
+        <button className="btn-report btn-html" onClick={generateHTMLReport}>📊 View HTML Report</button>
+      </div>
+
       <div className="tabs">
-        <button className={activeTab === 'slots' ? 'active' : ''} onClick={() => setActiveTab('slots')}>Slots</button>
-        <button className={activeTab === 'dashboard' ? 'active' : ''} onClick={() => setActiveTab('dashboard')}>Dashboard</button>
-        <button className={activeTab === 'payments' ? 'active' : ''} onClick={() => setActiveTab('payments')}>Payments</button>
+        <button className={activeTab === 'slots' ? 'tab active' : 'tab'} onClick={() => setActiveTab('slots')}>Slots</button>
+        <button className={activeTab === 'dashboard' ? 'tab active' : 'tab'} onClick={() => setActiveTab('dashboard')}>Dashboard</button>
+        <button className={activeTab === 'payments' ? 'tab active' : 'tab'} onClick={() => setActiveTab('payments')}>Payments</button>
       </div>
 
       {activeTab === 'slots' && (
         <>
           <div className="search-section">
-            <input type="text" placeholder="Search..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+            <span className="search-label">🔍 Search by name, slot #, or permit no...</span>
+            <input className="search-input" type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
           </div>
+
+          <div className="stats-row">
+            <div className="stat-card"><h4>TOTAL SLOTS</h4><div className="stat-number">10</div></div>
+            <div className="stat-card"><h4>OCCUPIED</h4><div className="stat-number">{occupiedCount}</div></div>
+            <div className="stat-card"><h4>VACANT</h4><div className="stat-number">{vacantCount}</div></div>
+            <div className="stat-card"><h4>OVERDUE</h4><div className="stat-number">{overdueCount}</div></div>
+            <div className="stat-card"><h4>COLLECTED</h4><div className="stat-number">₱{dashboard?.totalCollected || 0}</div></div>
+            <div className="stat-card"><h4>PENALTIES</h4><div className="stat-number">₱{dashboard?.totalPenalties || 0}</div></div>
+          </div>
+
           <div className="table-container">
             <table className="data-table">
-              <thead><tr><th>Slot</th><th>Status</th><th>Renter</th><th>Permit</th><th>Period</th><th>Balance</th><th>Actions</th></tr></thead>
+              <thead>
+                <tr><th>Slot #</th><th>Status</th><th>Renter Information</th><th>Permit No.</th><th>Rental Period</th><th>Balance</th><th>Actions</th></tr>
+              </thead>
               <tbody>
-                {slots.filter(s => s.renter.name.includes(searchTerm)).map(slot => (
+                {filteredSlots.map(slot => (
                   <tr key={slot.id}>
-                    <td>{slot.slotNumber}</td>
-                    <td>{slot.renter.isOccupied ? 'Occupied' : 'Vacant'}</td>
-                    <td>{slot.renter.name || '-'}</td>
-                    <td>{slot.renter.businessPermitNo || '-'}</td>
-                    <td>{slot.renter.startDate || '-'} → {slot.renter.endDate || '-'}</td>
-                    <td>₱{slot.renter.outstandingBalance || 0}</td>
+                    <td><strong>#{slot.slotNumber}</strong></td>
+                    <td><span className={'status ' + (slot.renter.isOccupied ? 'status-occupied' : 'status-vacant')}>{slot.renter.isOccupied ? 'OCCUPIED' : 'VACANT'}</span></td>
                     <td>
                       {slot.renter.isOccupied ? (
                         <>
-                          <button onClick={() => handleEdit(slot)}>Edit</button>
-                          <button onClick={() => { setSelectedSlotForPayment(slot); setShowPaymentModal(true); }}>Pay</button>
-                          {user?.role === 'admin' && <button onClick={() => handleVacate(slot.id)}>Vacate</button>}
+                          <div className="renter-name">{slot.renter.name}</div>
+                          <div className="renter-address">{slot.renter.address}</div>
+                          <div className="renter-contact">{slot.renter.contact}</div>
+                        </>
+                      ) : '—'}
+                    </td>
+                    <td>{slot.renter.businessPermitNo ? <span className="permit">{slot.renter.businessPermitNo}</span> : '—'}</td>
+                    <td>{slot.renter.isOccupied ? (slot.renter.startDate || '-') + ' → ' + (slot.renter.endDate || '-') : '—'}</td>
+                    <td className={slot.renter.outstandingBalance > 0 ? 'balance-due' : 'balance-paid'}>₱{slot.renter.outstandingBalance || 0}</td>
+                    <td className="actions">
+                      {slot.renter.isOccupied ? (
+                        <>
+                          <button className="btn-action btn-edit" onClick={() => handleEdit(slot)}>Edit</button>
+                          <button className="btn-action btn-pay" onClick={() => { setSelectedSlotForPayment(slot); setShowPaymentModal(true); }}>Pay</button>
+                          <button className="btn-action btn-remind" onClick={() => sendReminder(slot.id)}>Remind</button>
+                          {user?.role === 'admin' && <button className="btn-action btn-vacate" onClick={() => handleVacate(slot.id)}>Vacate</button>}
                         </>
                       ) : (
-                        <button onClick={() => handleEdit(slot)}>Add Renter</button>
+                        <button className="btn-action btn-add" onClick={() => handleEdit(slot)}>+ Add Renter</button>
                       )}
                     </td>
                   </tr>
@@ -281,67 +344,119 @@ function App() {
       )}
 
       {activeTab === 'dashboard' && dashboard && (
-        <div>
-          <h3>Dashboard</h3>
-          <p>Occupied: {dashboard.occupied}</p>
-          <p>Vacant: {dashboard.vacant}</p>
-          <p>Collected: ₱{dashboard.totalCollected}</p>
+        <div className="dashboard-container">
+          <div className="dashboard-header">Dashboard Overview</div>
+          <div className="dashboard-stats">
+            <div className="dashboard-stat-card"><h4>Total Slots</h4><div className="dashboard-stat-number">10</div></div>
+            <div className="dashboard-stat-card"><h4>Occupied</h4><div className="dashboard-stat-number">{dashboard.occupied}</div></div>
+            <div className="dashboard-stat-card"><h4>Vacant</h4><div className="dashboard-stat-number">{dashboard.vacant}</div></div>
+            <div className="dashboard-stat-card"><h4>Overdue</h4><div className="dashboard-stat-number">{dashboard.overdue}</div></div>
+            <div className="dashboard-stat-card"><h4>Collected</h4><div className="dashboard-stat-number">₱{dashboard.totalCollected}</div></div>
+            <div className="dashboard-stat-card"><h4>Penalties</h4><div className="dashboard-stat-number">₱{dashboard.totalPenalties}</div></div>
+          </div>
+          <div className="dashboard-two-col">
+            <div className="income-section"><h3>Monthly Income</h3><div className="income-amount">₱{dashboard.totalCollected || 0}</div><div className="income-month">{new Date().toLocaleString('default', { month: 'short' })}</div></div>
+            <div className="summary-section"><h3>Quick Summary</h3>
+              <div className="summary-item"><span className="summary-label">Total Collected:</span><span className="summary-value">₱{dashboard.totalCollected}</span></div>
+              <div className="summary-item"><span className="summary-label">Total Penalties:</span><span className="summary-value">₱{dashboard.totalPenalties}</span></div>
+              <div className="summary-item"><span className="summary-label">Outstanding Balance:</span><span className="summary-value">₱{dashboard.totalOutstanding}</span></div>
+              <div className="summary-item"><span className="summary-label">Occupancy Rate:</span><span className="summary-value">{(dashboard.occupied / 10 * 100).toFixed(0)}%</span></div>
+            </div>
+          </div>
         </div>
       )}
 
       {activeTab === 'payments' && (
-        <div>
-          <h3>Payments</h3>
+        <div className="payments-container">
+          <div className="payments-header">Payment History</div>
           <table className="payments-table">
-            <thead><tr><th>Date</th><th>Slot</th><th>Renter</th><th>Amount</th><th>Method</th></tr></thead>
+            <thead>
+              <tr><th>Date</th><th>Slot #</th><th>Renter Name</th><th>Amount</th><th>Method</th><th>OR Number</th></tr>
+            </thead>
             <tbody>
-              {payments.map(p => (
-                <tr key={p.id}><td>{new Date(p.date).toLocaleDateString()}</td><td>#{p.slotNumber}</td><td>{p.renterName}</td><td>₱{p.amount}</td><td>{p.paymentMethod}</td></tr>
-              ))}
+              {payments.length === 0 ? (
+                <tr><td colSpan="6" style={{textAlign: 'center', padding: '30px'}}>No payments recorded yet</td></tr>
+              ) : (
+                payments.map(p => (
+                  <tr key={p.id}>
+                    <td>{new Date(p.date).toLocaleDateString()}</td>
+                    <td>#{p.slotNumber}</td>
+                    <td>{p.renterName}</td>
+                    <td className="amount-paid">₱{p.amount}</td>
+                    <td>{p.paymentMethod}</td>
+                    <td><code>{p.orNumber}</code></td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       )}
 
       {editingSlot && (
-        <div className="modal">
-          <div className="modal-content">
-            <h3>{editingSlot.renter.isOccupied ? 'Edit' : 'Add'} Renter</h3>
-            <input placeholder="Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-            <input placeholder="Address" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
-            <input placeholder="Contact" value={formData.contact} onChange={e => setFormData({...formData, contact: e.target.value})} />
-            <input type="date" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} />
-            <input type="date" value={formData.endDate} onChange={e => setFormData({...formData, endDate: e.target.value})} />
-            <button onClick={handleSave}>Save</button>
-            <button onClick={() => setEditingSlot(null)}>Cancel</button>
+        <div className="modal-overlay" onClick={() => setEditingSlot(null)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3>{editingSlot.renter.isOccupied ? 'Edit Renter' : 'Add New Renter'} - Slot #{editingSlot.slotNumber}</h3></div>
+            <div className="modal-body">
+              <input placeholder="Full Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+              <input placeholder="Address" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
+              <input placeholder="Contact No." value={formData.contact} onChange={e => setFormData({...formData, contact: e.target.value})} />
+              <input type="date" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} />
+              <input type="date" value={formData.endDate} onChange={e => setFormData({...formData, endDate: e.target.value})} />
+            </div>
+            <div className="modal-footer">
+              <button className="btn-save" onClick={handleSave}>Save</button>
+              <button className="btn-cancel" onClick={() => setEditingSlot(null)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
 
       {showPaymentModal && selectedSlotForPayment && (
-        <div className="modal">
-          <div className="modal-content">
-            <h3>Payment for Slot #{selectedSlotForPayment.slotNumber}</h3>
-            <input type="number" placeholder="Amount" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} />
-            <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
-              <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
-            </select>
-            <button onClick={handlePayment}>Pay</button>
-            <button onClick={() => setShowPaymentModal(false)}>Cancel</button>
+        <div className="modal-overlay" onClick={() => setShowPaymentModal(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3>💰 Payment - Slot #{selectedSlotForPayment.slotNumber}</h3></div>
+            <div className="modal-body">
+              <p><strong>Renter:</strong> {selectedSlotForPayment.renter.name}</p>
+              <p><strong>Outstanding:</strong> ₱{selectedSlotForPayment.renter.outstandingBalance || 0}</p>
+              <input type="number" placeholder="Amount" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} />
+              <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+                <option>Cash</option><option>GCash</option><option>Bank Transfer</option>
+              </select>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-save" onClick={handlePayment}>Process Payment</button>
+              <button className="btn-cancel" onClick={() => setShowPaymentModal(false)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
 
       {showReport && (
-        <div className="modal">
-          <div className="modal-content">
-            <h3>Report</h3>
-            <pre>{JSON.stringify(slots, null, 2)}</pre>
-            <button onClick={printReport}>Print</button>
-            <button onClick={closeReport}>Close</button>
+        <div className="modal-overlay" onClick={closeReport}>
+          <div className="modal-box report-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3>📄 Market Stall Report</h3></div>
+            <div className="modal-body">
+              <p><strong>Date Generated:</strong> {new Date().toLocaleString()}</p>
+              <h4>Summary</h4>
+              <table className="report-table"><thead><tr><th>Total Slots</th><th>Occupied</th><th>Vacant</th><th>Occupancy Rate</th></tr></thead><tbody><tr><td style={{textAlign:'center'}}>10</td><td style={{textAlign:'center'}}>{occupiedCount}</td><td style={{textAlign:'center'}}>{vacantCount}</td><td style={{textAlign:'center'}}>{(occupiedCount/10*100).toFixed(0)}%</td></tr></tbody></table>
+              <h4>Slot Details</h4>
+              <table className="report-table"><thead><tr><th>Slot #</th><th>Status</th><th>Renter Name</th><th>Address</th><th>Contact</th><th>Permit No.</th></tr></thead>
+              <tbody>{slots.map(slot => (<tr key={slot.id}><td style={{textAlign:'center'}}>{slot.slotNumber}</td><td>{slot.renter.isOccupied ? 'Occupied' : 'Vacant'}</td><td>{slot.renter.name || '-'}</td><td>{slot.renter.address || '-'}</td><td>{slot.renter.contact || '-'}</td><td>{slot.renter.businessPermitNo || '-'}</td></tr>))}</tbody></table>
+            </div>
+            <div className="modal-footer"><button className="btn-save" onClick={printReport}>Print Report</button><button className="btn-cancel" onClick={closeReport}>Close</button></div>
           </div>
         </div>
       )}
+
+      <div className="bell-wrapper">
+        <div className="bell" onClick={() => setShowNotifications(!showNotifications)}>
+          🔔 {notifications.length > 0 && <span className="bell-badge">{notifications.length}</span>}
+          {showNotifications && notifications.length > 0 && (
+            <div className="notif-panel"><h4>⚠️ Alerts</h4>{notifications.map(n => <div key={n.id} className="notif-item">{n.message}</div>)}</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
